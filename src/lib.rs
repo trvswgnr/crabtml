@@ -305,7 +305,7 @@ mod tests {
 
         // Load a template from a string
         engine
-            .add_template_from_string("example", "hello {{ text }}")
+            .add_template_from_string(TEMPLATE_NAME, "hello {{ text }}")
             .unwrap();
 
         // Create a context
@@ -316,7 +316,7 @@ mod tests {
         );
 
         // Render the template
-        let result = engine.render("example", &context).unwrap();
+        let result = engine.render(TEMPLATE_NAME, &context).unwrap();
         assert_eq!(result, "hello darkness my old friend");
     }
 
