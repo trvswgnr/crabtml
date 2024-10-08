@@ -7,7 +7,7 @@ license = "MIT"
 description = "A simple and flexible template engine written in Rust."
 readme = "README.md"
 repository = "https://github.com/trvswgnr/crabtml"
-keywords = ["template", "templating", "language", "engine", "rust", "html"]
+keywords = ["template", "templating", "language", "engine", "html"]
 
 [dependencies]
 nom = "7.1.3"
