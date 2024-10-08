@@ -46,7 +46,7 @@ fn main() {
     
     // Render the template
     let result = engine.render("example", &context).unwrap();
-    println!("{}", result); // Output: Hello, World!
+    println!("{}", result); // -> hello darkness my old friend
 }
 ```
 
