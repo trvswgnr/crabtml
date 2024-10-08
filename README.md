@@ -47,12 +47,7 @@ fn main() {
 }
 ```
 
-For more detailed examples, check the `tests` module in the source code:
-
-```rust:src/lib.rs
-startLine: 239
-endLine: 321
-```
+For more detailed examples, check the [`tests` module]((https://github.com/trvswgnr/crabtml/blob/main/src/lib.rs#L239:L361)) in the source code.
 
 ## Template Syntax
 
