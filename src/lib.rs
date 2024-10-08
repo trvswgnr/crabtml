@@ -8,7 +8,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{alphanumeric1, multispace0},
-    combinator::{map, opt},
+    combinator::map,
     multi::many0,
     sequence::separated_pair,
     sequence::{delimited, preceded, terminated},
@@ -94,8 +94,20 @@ fn parse_if(input: &str) -> IResult<&str, Node> {
     let (input, _) = tag("{% if ")(input)?;
     let (input, condition) = take_until(" %}")(input)?;
     let (input, _) = tag(" %}")(input)?;
-    let (input, true_branch) = take_until("{% else %}")(input)?;
-    let (input, else_branch) = opt(preceded(tag("{% else %}"), take_until("{% endif %}")))(input)?;
+
+    let (input, true_branch, else_branch) =
+        match take_until::<_, _, nom::error::Error<&str>>("{% else %}")(input) {
+            Ok((remaining, true_content)) => {
+                let (remaining, _) = tag("{% else %}")(remaining)?;
+                let (remaining, else_content) = take_until("{% endif %}")(remaining)?;
+                (remaining, true_content, Some(else_content))
+            }
+            Err(_) => {
+                let (remaining, true_content) = take_until("{% endif %}")(input)?;
+                (remaining, true_content, None)
+            }
+        };
+
     let (input, _) = tag("{% endif %}")(input)?;
 
     let true_nodes = parse_template(true_branch)?.1;
@@ -378,5 +390,17 @@ mod tests {
 
         let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
         assert!(rendered.contains("<p>User: John Doe (30 years old)</p>"));
+    }
+
+    #[test]
+    fn test_if_condition_no_else() {
+        let mut engine = TemplateEngine::new();
+        engine
+            .add_template_from_string("no_else", "{% if cond %}hello{% endif %}")
+            .unwrap();
+        let mut context = HashMap::new();
+        context.insert("cond".to_string(), Value::Boolean(true));
+        let rendered = engine.render("no_else", &context).unwrap();
+        assert_eq!(rendered, "hello");
     }
 }
