@@ -35,11 +35,14 @@ fn main() {
     let mut engine = TemplateEngine::new();
     
     // Load a template from a string
-    engine.add_template_from_string("example", "Hello, {{ name }}!").unwrap();
+    engine.add_template_from_string("example", "hello {{ name }}").unwrap();
     
     // Create a context
     let mut context = HashMap::new();
-    context.insert("name".to_string(), Value::String("World".to_string()));
+    context.insert(
+        "name".to_string(),
+        Value::String("darkness my old friend".to_string()),
+    );
     
     // Render the template
     let result = engine.render("example", &context).unwrap();

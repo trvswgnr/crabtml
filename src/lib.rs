@@ -300,6 +300,27 @@ mod tests {
     }
 
     #[test]
+    fn test_basic_example() {
+        let mut engine = TemplateEngine::new();
+
+        // Load a template from a string
+        engine
+            .add_template_from_string("example", "hello {{ text }}")
+            .unwrap();
+
+        // Create a context
+        let mut context = HashMap::new();
+        context.insert(
+            "text".to_string(),
+            Value::String("darkness my old friend".to_string()),
+        );
+
+        // Render the template
+        let result = engine.render("example", &context).unwrap();
+        assert_eq!(result, "hello darkness my old friend");
+    }
+
+    #[test]
     fn test_template_rendering() {
         let engine = create_test_engine();
         let context = create_test_context();
