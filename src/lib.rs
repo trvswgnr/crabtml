@@ -48,7 +48,7 @@ impl Template {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     String(String),
     Number(f64),
@@ -248,6 +248,54 @@ impl TemplateEngine {
     }
 }
 
+/// Creates a template context from a list of key-value pairs.
+#[macro_export]
+macro_rules! context {
+    ($($key:expr => $value:expr),* $(,)?) => {{
+        let mut context = ::std::collections::HashMap::new();
+        $(
+            context.insert($key.to_string(), $crate::Value::from($value));
+        )*
+        context
+    }};
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(n: f64) -> Self {
+        Value::Number(n)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
+    }
+}
+
+impl<T: Into<Value>> From<Vec<T>> for Value {
+    fn from(v: Vec<T>) -> Self {
+        Value::List(v.into_iter().map(|item| item.into()).collect())
+    }
+}
+
+impl<T: Into<Value>> From<HashMap<String, T>> for Value {
+    fn from(m: HashMap<String, T>) -> Self {
+        Value::Object(m.into_iter().map(|(k, v)| (k, v.into())).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +450,48 @@ mod tests {
         context.insert("cond".to_string(), Value::Boolean(true));
         let rendered = engine.render("no_else", &context).unwrap();
         assert_eq!(rendered, "hello");
+    }
+
+    #[test]
+    fn test_context_macro() {
+        let context = context! {
+            "title" => "Welcome to CrabTML!",
+            "show_message" => true,
+            "items" => vec!["Apple", "Banana", "Cherry"],
+            "price" => 19.99,
+            "user" => context! {
+                "name" => "John Doe",
+                "age" => 30.0,
+            },
+        };
+
+        assert_eq!(context.len(), 5);
+        assert_eq!(
+            context.get("title"),
+            Some(&Value::String("Welcome to CrabTML!".to_string()))
+        );
+        assert_eq!(context.get("show_message"), Some(&Value::Boolean(true)));
+        assert_eq!(
+            context.get("items"),
+            Some(&Value::List(vec![
+                Value::String("Apple".to_string()),
+                Value::String("Banana".to_string()),
+                Value::String("Cherry".to_string()),
+            ]))
+        );
+        assert_eq!(context.get("price"), Some(&Value::Number(19.99)));
+
+        assert!(
+            context.get("user").is_some(),
+            "User object not found in context"
+        );
+
+        if let Some(Value::Object(user)) = context.get("user") {
+            assert_eq!(
+                user.get("name"),
+                Some(&Value::String("John Doe".to_string()))
+            );
+            assert_eq!(user.get("age"), Some(&Value::Number(30.0)));
+        }
     }
 }
