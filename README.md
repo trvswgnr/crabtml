@@ -2,6 +2,9 @@
 
 CrabTML is a lightweight and flexible template engine written in Rust. It provides a simple yet powerful way to render dynamic content in your applications.
 
+> [!WARNING]  
+> This project is still in early development and is not recommended for production use.
+
 ## Features
 
 - Variable interpolation
