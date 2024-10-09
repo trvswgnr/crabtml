@@ -56,7 +56,7 @@ fn main() {
 }
 ```
 
-For more detailed examples, check the `tests` module in the [source code](https://github.com/trvswgnr/crabtml/blob/main/src/lib.rs#L239:L361).
+For more detailed examples, check the `tests` module in the [source code](https://github.com/trvswgnr/crabtml/blob/main/src/lib.rs#L455).
 
 ## Template Syntax
 
