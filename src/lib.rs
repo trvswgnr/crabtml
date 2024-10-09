@@ -33,9 +33,20 @@ const UNIT: unit = ();
 enum Node {
     Text(String),
     Variable(String),
-    If(String, Vec<Node>, Option<Vec<Node>>),
-    For(String, String, Vec<Node>),
-    Let(String, Value),
+    If {
+        condition: String,
+        true_branch: Vec<Node>,
+        else_branch: Option<Vec<Node>>,
+    },
+    For {
+        item: String,
+        collection: String,
+        body: Vec<Node>,
+    },
+    Let {
+        identifier: String,
+        value: Value,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -324,7 +335,11 @@ fn parse_if(input: &str) -> IResult<&str, Node> {
 
     Ok((
         input,
-        Node::If(condition.trim().to_string(), true_nodes, else_nodes),
+        Node::If {
+            condition: condition.trim().to_string(),
+            true_branch: true_nodes,
+            else_branch: else_nodes,
+        },
     ))
 }
 
@@ -339,7 +354,11 @@ fn parse_for(input: &str) -> IResult<&str, Node> {
     let body_nodes = parse_template(body)?.1;
     Ok((
         input,
-        Node::For(item.to_string(), collection.trim().to_string(), body_nodes),
+        Node::For {
+            item: item.to_string(),
+            collection: collection.trim().to_string(),
+            body: body_nodes,
+        },
     ))
 }
 
@@ -359,7 +378,13 @@ fn parse_let(input: &str) -> IResult<&str, Node> {
     ))(input)?;
     let (input, _) = tag(" %}")(input)?;
 
-    Ok((input, Node::Let(var_name.to_string(), value)))
+    Ok((
+        input,
+        Node::Let {
+            identifier: var_name.to_string(),
+            value,
+        },
+    ))
 }
 
 fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
@@ -381,8 +406,12 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
                 None => Err(format!("Variable `{}` not found in context", name).into()),
             }
         }
-        Node::If(condition, true_branch, else_branch) => {
-            let condition_result = eval_condition(condition, context)?;
+        Node::If {
+            condition,
+            true_branch,
+            else_branch,
+        } => {
+            let condition_result = eval_condition(&condition, context)?;
             if condition_result {
                 render_nodes(true_branch, context)
             } else if let Some(else_nodes) = else_branch {
@@ -391,7 +420,11 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
                 Ok(String::new())
             }
         }
-        Node::For(item, collection, body) => {
+        Node::For {
+            item,
+            collection,
+            body,
+        } => {
             let items = match context.get(collection) {
                 Some(Value::List(list)) => list,
                 _ => {
@@ -408,7 +441,7 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
             }
             Ok(output)
         }
-        Node::Let(var_name, value) => {
+        Node::Let { identifier, value } => {
             let resolved_value = match value {
                 Value::Variable(var) => {
                     context
@@ -420,7 +453,7 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
                 }
                 _ => value.clone(),
             };
-            context.set(var_name.clone(), resolved_value);
+            context.set(identifier.clone(), resolved_value);
             Ok(String::new())
         }
     }
