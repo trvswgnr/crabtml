@@ -38,10 +38,10 @@ fn main() {
     engine.add_template_from_string("example", "hello {{ text }}").unwrap();
     
     // Create a context
-    let mut context = HashMap::new();
-    context.insert(
-        "text".to_string(),
-        Value::String("darkness my old friend".to_string()),
+    let mut context = Context::new();
+    context.set(
+        "text",
+        "darkness my old friend"),
     );
     
     // Render the template
@@ -49,7 +49,7 @@ fn main() {
     println!("{}", result); // -> hello darkness my old friend
 
 
-    // Create a context using the context macro
+    // You can also create a context using the `context!` macro
     let context = context! {
         "text" => "darkness my old friend",
     };
