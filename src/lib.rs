@@ -28,6 +28,8 @@ enum Node {
     Variable(String),
     If(String, Vec<Node>, Option<Vec<Node>>),
     For(String, String, Vec<Node>),
+    // Add this new variant
+    Let(String, Value),
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +50,7 @@ impl Template {
         }
     }
 
-    pub fn render(&self, context: &Context) -> Result<String, String> {
+    pub fn render(&self, context: &mut Context) -> Result<String, String> {
         render_nodes(&self.nodes, context)
     }
 }
@@ -222,7 +224,13 @@ impl From<Object> for Value {
 }
 
 fn parse_template(input: &str) -> IResult<&str, Vec<Node>> {
-    many0(alt((parse_variable, parse_if, parse_for, parse_text)))(input)
+    many0(alt((
+        parse_variable,
+        parse_if,
+        parse_for,
+        parse_let, // Add this new parser
+        parse_text,
+    )))(input)
 }
 
 fn parse_text(input: &str) -> IResult<&str, Node> {
@@ -286,7 +294,26 @@ fn parse_for(input: &str) -> IResult<&str, Node> {
     ))
 }
 
-fn render_node(node: &Node, context: &Context) -> Result<String, String> {
+// Add this new parser function
+fn parse_let(input: &str) -> IResult<&str, Node> {
+    let (input, _) = tag("{% let ")(input)?;
+    let (input, var_name) = alphanumeric1(input)?;
+    let (input, _) = tag(" = ")(input)?;
+    let (input, value) = alt((
+        map(
+            delimited(tag("\""), take_until("\""), tag("\"")),
+            |s: &str| Value::String(s.to_string()),
+        ),
+        map(nom::number::complete::double, Value::Number),
+        map(tag("true"), |_| Value::Boolean(true)),
+        map(tag("false"), |_| Value::Boolean(false)),
+    ))(input)?;
+    let (input, _) = tag(" %}")(input)?;
+
+    Ok((input, Node::Let(var_name.to_string(), value)))
+}
+
+fn render_node(node: &Node, context: &mut Context) -> Result<String, String> {
     match node {
         Node::Text(text) => Ok(text.clone()),
         Node::Variable(name) => {
@@ -329,14 +356,18 @@ fn render_node(node: &Node, context: &Context) -> Result<String, String> {
             for value in items {
                 let mut loop_context = context.clone();
                 loop_context.set(item.clone(), value.clone());
-                output.push_str(&render_nodes(body, &loop_context)?);
+                output.push_str(&render_nodes(body, &mut loop_context)?);
             }
             Ok(output)
+        }
+        Node::Let(var_name, value) => {
+            context.set(var_name.clone(), value.clone());
+            Ok(String::new()) // Let statements don't produce output
         }
     }
 }
 
-fn render_nodes(nodes: &[Node], context: &Context) -> Result<String, String> {
+fn render_nodes(nodes: &[Node], context: &mut Context) -> Result<String, String> {
     let mut output = String::new();
     for node in nodes {
         output.push_str(&render_node(node, context)?);
@@ -403,7 +434,7 @@ impl TemplateEngine {
     /// ```
     /// use crabtml::TemplateEngine;
     /// let mut engine = TemplateEngine::new();
-    /// engine.add_template_from_file("test1", "tests/test.html").unwrap();
+    /// engine.add_template_from_file("test", "tests/test.html").unwrap();
     /// assert!(!engine.is_empty());
     /// ```
     pub fn add_template_from_file<P: AsRef<Path>>(
@@ -451,10 +482,10 @@ impl TemplateEngine {
     ///     .unwrap();
     /// let mut context = Context::new();
     /// context.set("text", "darkness my old friend");
-    /// let rendered = engine.render("test", &context).unwrap();
+    /// let rendered = engine.render("test", &mut context).unwrap();
     /// assert_eq!(rendered, "hello darkness my old friend");
     /// ```
-    pub fn render(&self, name: &str, context: &Context) -> Result<String, String> {
+    pub fn render(&self, name: &str, context: &mut Context) -> Result<String, String> {
         match self.templates.get(name) {
             Some(template) => template.render(context),
             None => Err(format!("Template '{}' not found", name)),
@@ -575,16 +606,26 @@ mod tests {
         );
 
         // Render the template
-        let result = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let result = engine.render(TEMPLATE_NAME, &mut context).unwrap();
         assert_eq!(result, "hello darkness my old friend");
+    }
+
+    #[test]
+    fn test_template_from_file() {
+        let mut engine = TemplateEngine::new();
+        engine.add_template_from_file("test", "tests/test.html").unwrap();
+        let mut context = create_test_context();
+        let result = engine.render("test", &mut context).unwrap();
+        assert!(result.contains("<title>Welcome to CrabTML!</title>"));
+        assert!(result.contains("<p>X: 69, Y: hello darkness my old friend</p>"));
     }
 
     #[test]
     fn test_template_rendering() {
         let engine = create_test_engine();
-        let context = create_test_context();
+        let mut context = create_test_context();
 
-        let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let rendered = engine.render(TEMPLATE_NAME, &mut context).unwrap();
 
         assert!(rendered.contains("<title>Welcome to CrabTML!</title>"));
         assert!(rendered.contains("<h1>Welcome to CrabTML!</h1>"));
@@ -602,13 +643,13 @@ mod tests {
         let mut context = create_test_context();
 
         // Test with show_message = true
-        let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let rendered = engine.render(TEMPLATE_NAME, &mut context).unwrap();
         assert!(rendered.contains("<p>Welcome to our website!</p>"));
         assert!(!rendered.contains("<p>Please log in to see the welcome message.</p>"));
 
         // Test with show_message = false
         context.set("show_message".to_string(), Value::Boolean(false));
-        let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let rendered = engine.render(TEMPLATE_NAME, &mut context).unwrap();
         assert!(!rendered.contains("<p>Welcome to our website!</p>"));
         assert!(rendered.contains("<p>Please log in to see the welcome message.</p>"));
     }
@@ -619,23 +660,23 @@ mod tests {
         let mut context = create_test_context();
 
         // Test with existing items
-        let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let rendered = engine.render(TEMPLATE_NAME, &mut context).unwrap();
         assert!(rendered.contains("<li>Apple</li>"));
         assert!(rendered.contains("<li>Banana</li>"));
         assert!(rendered.contains("<li>Cherry</li>"));
 
         // Test with empty list
         context.set("items".to_string(), Value::List(vec![]));
-        let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let rendered = engine.render(TEMPLATE_NAME, &mut context).unwrap();
         assert!(!rendered.contains("<li>"));
     }
 
     #[test]
     fn test_nested_object_access() {
         let engine = create_test_engine();
-        let context = create_test_context();
+        let mut context = create_test_context();
 
-        let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
+        let rendered = engine.render(TEMPLATE_NAME, &mut context).unwrap();
         assert!(rendered.contains("<p>User: John Doe (30 years old)</p>"));
     }
 
@@ -647,7 +688,7 @@ mod tests {
             .unwrap();
         let mut context = Context::new();
         context.set("cond".to_string(), Value::Boolean(true));
-        let rendered = engine.render("no_else", &context).unwrap();
+        let rendered = engine.render("no_else", &mut context).unwrap();
         assert_eq!(rendered, "hello");
     }
 
@@ -697,7 +738,7 @@ mod tests {
     #[test]
     fn test_template_error_handling() {
         let engine = TemplateEngine::new();
-        let result = engine.render("test", &Context::new());
+        let result = engine.render("test", &mut Context::new());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Template 'test' not found".to_string());
     }
@@ -708,11 +749,27 @@ mod tests {
         engine
             .add_template_from_string("test", "hello {{ text }}")
             .unwrap();
-        let result = engine.render("test", &Context::new());
+        let result = engine.render("test", &mut Context::new());
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
             "Variable `text` not found in context".to_string()
         );
+    }
+
+    #[test]
+    fn test_let_statement() {
+        let mut engine = TemplateEngine::new();
+        engine
+            .add_template_from_string(
+                "let_test",
+                "{% let x = 42 %}{% let y = \"hello\" %}X: {{ x }}, Y: {{ y }}",
+            )
+            .unwrap();
+        let mut context = Context::new();
+        let rendered = engine.render("let_test", &mut context).unwrap();
+        assert_eq!(rendered, "X: 42, Y: hello");
+        assert_eq!(context.get("x"), Some(&Value::Number(42.0)));
+        assert_eq!(context.get("y"), Some(&Value::String("hello".to_string())));
     }
 }

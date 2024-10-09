@@ -45,7 +45,7 @@ fn main() {
     );
     
     // Render the template
-    let result = engine.render("example", &context).unwrap();
+    let result = engine.render("example", &mut context).unwrap();
     println!("{}", result); // -> hello darkness my old friend
 
 
@@ -53,7 +53,7 @@ fn main() {
     // and objects using the `object!` macro
     use crabtml::{context, object};
 
-    let context = context! {
+    let mut context = context! {
         "text" => "darkness my old friend",
         "user" => object! {
             "name" => "trav",
