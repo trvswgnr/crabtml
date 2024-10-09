@@ -28,7 +28,7 @@ crabtml = "0.1.0"
 Here's a quick example of how to use CrabTML:
 
 ```rust
-use crabtml::{TemplateEngine, Value};
+use crabtml::{TemplateEngine, Value, Context};
 use std::collections::HashMap;
 
 fn main() {
@@ -41,7 +41,7 @@ fn main() {
     let mut context = Context::new();
     context.set(
         "text",
-        "darkness my old friend"),
+        "darkness my old friend",
     );
     
     // Render the template
@@ -49,9 +49,16 @@ fn main() {
     println!("{}", result); // -> hello darkness my old friend
 
 
-    // You can also create a context using the `context!` macro
+    // You can also create a context using the `context!` macro, and objects
+    // using the `object!` macro
+    use crabtml::{context, object};
+
     let context = context! {
         "text" => "darkness my old friend",
+        "user" => object! {
+            "name" => "trav",
+            "age" => 35,
+        },
     };
 }
 ```

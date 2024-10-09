@@ -6,8 +6,10 @@ use std::{
     collections::HashMap,
     fmt, fs, io,
     ops::{Deref, DerefMut},
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+use serde::{Deserialize, Serialize};
 
 use nom::{
     branch::alt,
@@ -52,7 +54,7 @@ impl Template {
 }
 
 /// Represents a simple object that can be used to store key-value pairs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Object(pub HashMap<String, Value>);
 
 impl Object {
@@ -105,6 +107,27 @@ impl Context {
     pub fn new() -> Self {
         Context(Object::new())
     }
+
+    /// Creates a new `Context` from a JSON file.
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let path = PathBuf::from(path.as_ref());
+        // if the file does not exist, return an Error
+        if !path.exists() {
+            return Err(format!("Context file not found: {}", path.display()));
+        }
+        // if the file is not a JSON file, return an Error
+        if path.extension().unwrap_or_default() != ".json" {
+            return Err(format!(
+                "Context file is not a JSON file: {}",
+                path.display()
+            ));
+        }
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read context file: {}", e))?;
+        let object = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse context: {}", e))?;
+        Ok(Context(object))
+    }
 }
 
 impl Deref for Context {
@@ -124,7 +147,7 @@ impl DerefMut for Context {
 ///
 /// This enum can hold different types of values such as strings, numbers,
 /// booleans, lists, and objects.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     /// A string value.
     String(String),
@@ -314,26 +337,40 @@ impl TemplateEngine {
         }
     }
 
-    /// Adds a template from a file.
+    fn add_template(&mut self, name: &str, template: Template) -> Result<(), io::Error> {
+        if self.templates.contains_key(name) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("Template '{}' has already been added", name),
+            ));
+        }
+        self.templates.insert(name.to_string(), template);
+        Ok(())
+    }
+
+    /// Adds a template from a file path to the template engine.
     ///
     /// # Examples
     ///
     /// ```
     /// use crabtml::TemplateEngine;
     /// let mut engine = TemplateEngine::new();
-    /// engine.add_template_from_file("test", "tests/test.html").unwrap();
+    /// engine.add_template_from_file("test1", "tests/test.html").unwrap();
     /// assert!(!engine.is_empty());
     /// ```
-    pub fn add_template_from_file(&mut self, name: &str, pathname: &str) -> io::Result<()> {
-        let path = Path::new(pathname);
+    pub fn add_template_from_file<P: AsRef<Path>>(
+        &mut self,
+        name: &str,
+        pathname: P,
+    ) -> io::Result<()> {
+        let path = PathBuf::from(pathname.as_ref());
         let content = fs::read_to_string(path)?;
         let template =
             Template::new(&content).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        self.templates.insert(name.to_string(), template);
-        Ok(())
+        self.add_template(name, template)
     }
 
-    /// Adds a template from a string.
+    /// Adds a template from a string to the template engine.
     ///
     /// # Examples
     ///
@@ -343,11 +380,14 @@ impl TemplateEngine {
     /// engine.add_template_from_string("test", "hello {{ text }}").unwrap();
     /// assert!(!engine.is_empty());
     /// ```
-    pub fn add_template_from_string(&mut self, name: &str, template: &str) -> Result<(), String> {
+    pub fn add_template_from_string(
+        &mut self,
+        name: &str,
+        template: &str,
+    ) -> Result<(), io::Error> {
         let template =
-            Template::new(template).map_err(|e| format!("Failed to parse template: {}", e))?;
-        self.templates.insert(name.to_string(), template);
-        Ok(())
+            Template::new(template).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        self.add_template(name, template)
     }
 
     /// Renders a template.
@@ -355,9 +395,12 @@ impl TemplateEngine {
     /// # Examples
     ///
     /// ```
-    /// use crabtml::{TemplateEngine, Context};
+    /// use crabtml::{Context, TemplateEngine};
+    ///
     /// let mut engine = TemplateEngine::new();
-    /// engine.add_template_from_string("test", "hello {{ text }}").unwrap();
+    /// engine
+    ///     .add_template_from_string("test", "hello {{ text }}")
+    ///     .unwrap();
     /// let mut context = Context::new();
     /// context.set("text", "darkness my old friend");
     /// let rendered = engine.render("test", &context).unwrap();
@@ -396,7 +439,7 @@ macro_rules! object {
     }};
 }
 
-/// Alias for `object!` macro.
+/// Creates a `Context` from a list of key-value pairs.
 #[macro_export]
 macro_rules! context {
     ($($key:expr => $value:expr),* $(,)?) => {{

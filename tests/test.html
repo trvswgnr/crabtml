@@ -9,6 +9,19 @@
 
 <body>
     <h1>{{ title }}</h1>
+    <p>Price: ${{ price }}</p>
+    <p>User: {{ user.name }} ({{ user.age }} years old)</p>
+    {% if show_message %}
+        <p>Welcome to our website!</p>
+    {% else %}
+        <p>Please log in to see the welcome message.</p>
+    {% endif %}
+    <h2>Available Items:</h2>
+    <ul>
+        {% for item in items %}
+            <li>{{ item }}</li>
+        {% endfor %}
+    </ul>
 </body>
 
 </html>

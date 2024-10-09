@@ -1,0 +1,14 @@
+{
+    "title": "Welcome to CrabTML!",
+    "show_message": true,
+    "items": [
+        "Apple",
+        "Banana",
+        "Cherry"
+    ],
+    "price": 19.99,
+    "user": {
+        "name": "John Doe",
+        "age": 30
+    }
+}
