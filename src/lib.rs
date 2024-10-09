@@ -4,6 +4,7 @@
 
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     fmt, fs, io,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
@@ -43,7 +44,7 @@ struct Template {
 }
 
 impl Template {
-    pub fn new(template: &str) -> Result<Self, AnyError> {
+    pub fn new(template: &str) -> Result<Template, AnyError> {
         match parse_template(template) {
             Ok((_, nodes)) => Ok(Template { nodes }),
             Err(e) => match &e {
@@ -66,7 +67,7 @@ pub struct Object(pub HashMap<String, Value>);
 
 impl Object {
     /// Creates a new `Object`.
-    pub fn new() -> Self {
+    pub fn new() -> Object {
         Object(HashMap::new())
     }
 
@@ -98,7 +99,7 @@ impl Object {
 }
 
 impl FromIterator<(String, Value)> for Object {
-    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
+    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Object {
         Object(HashMap::from_iter(iter))
     }
 }
@@ -111,38 +112,43 @@ impl FromIterator<(String, Value)> for Object {
 pub struct Context(pub Object);
 impl Context {
     /// Creates a new `Context`.
-    pub fn new() -> Self {
+    pub fn new() -> Context {
         Context(Object::new())
     }
 
     /// Creates a new `Context` from a JSON file.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, AnyError> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Context, AnyError> {
         let path = PathBuf::from(path.as_ref());
-        // if the file does not exist, return an Error
+
         if !path.exists() {
             return Err(format!("Context file not found: {}", path.display()).into());
         }
-        // if the file is not a JSON file, return an Error
-        if path.extension().unwrap_or_default() != "json" {
+
+        if path.extension().and_then(OsStr::to_str) != Some("json") {
             return Err(format!("Context file is not a JSON file: {}", path.display()).into());
         }
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read context file: {}", e))?;
-        Context::from_json(&content)
+
+        fs::read_to_string(path)
+            .map_err(Into::into)
+            .and_then(Context::from_json)
     }
 
-    fn from_json(content: &str) -> Result<Self, AnyError> {
-        let value: serde_json::Value =
-            serde_json::from_str(content).map_err(|e| format!("Failed to parse context: {}", e))?;
+    fn from_json<T: AsRef<str>>(content: T) -> Result<Context, AnyError> {
+        let value: serde_json::Value = serde_json::from_str(content.as_ref())?;
+        Context::try_from(value)
+    }
+}
 
+impl TryFrom<serde_json::Value> for Context {
+    type Error = AnyError;
+
+    fn try_from(value: serde_json::Value) -> Result<Context, Self::Error> {
         match value {
-            serde_json::Value::Object(map) => {
-                let mut ctx = Context::new();
-                for (k, v) in map {
-                    ctx.set(k, json_to_value(v)?);
-                }
-                Ok(ctx)
-            }
+            serde_json::Value::Object(map) => map
+                .into_iter()
+                .map(|(k, v)| Value::try_from(v).map(|value| (k, value)))
+                .collect::<Result<Object, _>>()
+                .map(Context),
             _ => Err("Root JSON value must be an object".into()),
         }
     }
@@ -155,6 +161,7 @@ impl Deref for Context {
         &self.0
     }
 }
+
 impl DerefMut for Context {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -184,7 +191,7 @@ impl fmt::Display for Value {
         match self {
             Value::String(s) => write!(f, "{}", s),
             Value::Number(n) => write!(f, "{}", n),
-            Value::Boolean(b) => write!(f, "{}", b),
+            Value::Boolean(b) => write!(f, "{:?}", b),
             Value::List(l) => write!(f, "{:?}", l),
             Value::Object(o) => write!(f, "{:?}", o),
         }
@@ -192,50 +199,73 @@ impl fmt::Display for Value {
 }
 
 impl From<&str> for Value {
-    fn from(s: &str) -> Self {
+    fn from(s: &str) -> Value {
         Value::String(s.to_string())
     }
 }
 
 impl From<String> for Value {
-    fn from(s: String) -> Self {
+    fn from(s: String) -> Value {
         Value::String(s)
     }
 }
 
 impl From<f64> for Value {
-    fn from(n: f64) -> Self {
+    fn from(n: f64) -> Value {
         Value::Number(n)
     }
 }
 
 impl From<i32> for Value {
-    fn from(n: i32) -> Self {
+    fn from(n: i32) -> Value {
         Value::Number(n as f64)
     }
 }
 
 impl From<bool> for Value {
-    fn from(b: bool) -> Self {
+    fn from(b: bool) -> Value {
         Value::Boolean(b)
     }
 }
 
 impl<T: Into<Value>> From<Vec<T>> for Value {
-    fn from(v: Vec<T>) -> Self {
+    fn from(v: Vec<T>) -> Value {
         Value::List(v.into_iter().map(|item| item.into()).collect())
     }
 }
 
 impl<T: Into<Value>> From<HashMap<String, T>> for Value {
-    fn from(m: HashMap<String, T>) -> Self {
+    fn from(m: HashMap<String, T>) -> Value {
         Value::Object(m.into_iter().map(|(k, v)| (k, v.into())).collect())
     }
 }
 
 impl From<Object> for Value {
-    fn from(o: Object) -> Self {
+    fn from(o: Object) -> Value {
         Value::Object(o)
+    }
+}
+
+impl TryFrom<serde_json::Value> for Value {
+    type Error = AnyError;
+
+    fn try_from(value: serde_json::Value) -> Result<Value, Self::Error> {
+        match value {
+            serde_json::Value::Null => Err("`null` values are not supported".into()),
+            serde_json::Value::Bool(b) => Ok(Value::Boolean(b)),
+            serde_json::Value::Number(n) => Ok(Value::Number(n.as_f64().unwrap_or(0.0))),
+            serde_json::Value::String(s) => Ok(Value::String(s)),
+            serde_json::Value::Array(arr) => arr
+                .into_iter()
+                .map(Value::try_from)
+                .collect::<Result<Vec<Value>, AnyError>>()
+                .map(Value::List),
+            serde_json::Value::Object(map) => map
+                .into_iter()
+                .map(|(k, v)| Value::try_from(v).map(|value| (k, value)))
+                .collect::<Result<Object, _>>()
+                .map(Value::Object),
+        }
     }
 }
 
@@ -424,7 +454,7 @@ pub struct TemplateEngine {
 
 impl TemplateEngine {
     /// Creates a new `TemplateEngine`.
-    pub fn new() -> Self {
+    pub fn new() -> TemplateEngine {
         TemplateEngine {
             templates: HashMap::new(),
         }
@@ -538,29 +568,6 @@ macro_rules! context {
     ($($key:expr => $value:expr),* $(,)?) => {{
         $crate::object!($($key => $value),*)
     }};
-}
-
-fn json_to_value(value: serde_json::Value) -> Result<Value, AnyError> {
-    match value {
-        serde_json::Value::Null => Ok(Value::String("".to_string())),
-        serde_json::Value::Bool(b) => Ok(Value::Boolean(b)),
-        serde_json::Value::Number(n) => Ok(Value::Number(n.as_f64().unwrap_or(0.0))),
-        serde_json::Value::String(s) => Ok(Value::String(s)),
-        serde_json::Value::Array(arr) => {
-            let mut list = Vec::new();
-            for item in arr {
-                list.push(json_to_value(item)?);
-            }
-            Ok(Value::List(list))
-        }
-        serde_json::Value::Object(map) => {
-            let mut object = Object::new();
-            for (k, v) in map {
-                object.set(k, json_to_value(v)?);
-            }
-            Ok(Value::Object(object))
-        }
-    }
 }
 
 #[cfg(test)]
