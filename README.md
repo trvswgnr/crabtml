@@ -49,8 +49,8 @@ fn main() {
     println!("{}", result); // -> hello darkness my old friend
 
 
-    // You can also create a context using the `context!` macro, and objects
-    // using the `object!` macro
+    // You can also create a context using the `context!` macro,
+    // and objects using the `object!` macro
     use crabtml::{context, object};
 
     let context = context! {
