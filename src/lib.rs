@@ -1,12 +1,17 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::fs;
-use std::io;
-use std::path::Path;
+#![warn(missing_docs)]
+#![warn(rustdoc::missing_crate_level_docs)]
+#![doc = include_str!("../README.md")]
+
+use std::{
+    collections::HashMap,
+    fmt, fs, io,
+    ops::{Deref, DerefMut},
+    path::Path,
+};
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until},
+    bytes::complete::{tag, take_until, take_while1},
     character::complete::{alphanumeric1, multispace0},
     combinator::map,
     multi::many0,
@@ -15,10 +20,8 @@ use nom::{
     IResult,
 };
 
-use nom::bytes::complete::take_while1;
-
 #[derive(Debug, Clone)]
-pub enum Node {
+enum Node {
     Text(String),
     Variable(String),
     If(String, Vec<Node>, Option<Vec<Node>>),
@@ -26,8 +29,8 @@ pub enum Node {
 }
 
 #[derive(Debug, Clone)]
-pub struct Template {
-    pub nodes: Vec<Node>,
+struct Template {
+    nodes: Vec<Node>,
 }
 
 impl Template {
@@ -43,18 +46,96 @@ impl Template {
         }
     }
 
-    pub fn render(&self, context: &HashMap<String, Value>) -> Result<String, String> {
+    pub fn render(&self, context: &Context) -> Result<String, String> {
         render_nodes(&self.nodes, context)
     }
 }
 
+/// Represents a simple object that can be used to store key-value pairs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Object(pub HashMap<String, Value>);
+
+impl Object {
+    /// Creates a new `Object`.
+    pub fn new() -> Self {
+        Object(HashMap::new())
+    }
+
+    /// Gets the value associated with the given key.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.0.get(key)
+    }
+
+    /// Sets the value for the given key.
+    ///
+    /// If the object didn't have this key present, `None` is returned.
+    ///
+    /// If the object did have this key present, the value is updated, and the
+    /// old value is returned. The key should be a string and the value should
+    /// be convertible to a `Value`.
+    pub fn set<T: Into<String>, V: Into<Value>>(&mut self, key: T, value: V) -> Option<Value> {
+        self.0.insert(key.into(), value.into())
+    }
+
+    /// Checks if the object is empty, i.e. has no key-value pairs.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of key-value pairs in the object.
+    pub fn size(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl FromIterator<(String, Value)> for Object {
+    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
+        Object(HashMap::from_iter(iter))
+    }
+}
+
+/// Represents a context that can be used to store key-value pairs.
+///
+/// Implements `Deref` and `DerefMut` to allow easy access to the underlying
+/// `Object`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Context(pub Object);
+impl Context {
+    /// Creates a new `Context`.
+    pub fn new() -> Self {
+        Context(Object::new())
+    }
+}
+
+impl Deref for Context {
+    type Target = Object;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for Context {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+/// Represents a value that can be used in templates.
+///
+/// This enum can hold different types of values such as strings, numbers,
+/// booleans, lists, and objects.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    /// A string value.
     String(String),
+    /// A number value, represented as a 64-bit floating-point number.
     Number(f64),
+    /// A boolean value.
     Boolean(bool),
+    /// A list of values.
     List(Vec<Value>),
-    Object(HashMap<String, Value>),
+    /// An object containing key-value pairs.
+    Object(Object),
 }
 
 impl fmt::Display for Value {
@@ -128,14 +209,13 @@ fn parse_for(input: &str) -> IResult<&str, Node> {
     let (input, _) = tag("{% endfor %}")(input)?;
 
     let body_nodes = parse_template(body)?.1;
-
     Ok((
         input,
         Node::For(item.to_string(), collection.trim().to_string(), body_nodes),
     ))
 }
 
-fn render_node(node: &Node, context: &HashMap<String, Value>) -> Result<String, String> {
+fn render_node(node: &Node, context: &Context) -> Result<String, String> {
     match node {
         Node::Text(text) => Ok(text.clone()),
         Node::Variable(name) => {
@@ -145,13 +225,13 @@ fn render_node(node: &Node, context: &HashMap<String, Value>) -> Result<String, 
             for &part in &parts[1..] {
                 match current_value {
                     Some(Value::Object(obj)) => current_value = obj.get(part),
-                    _ => return Err(format!("Cannot access '{}' in '{}'", part, name)),
+                    _ => return Err(format!("Cannot access `{}` in `{}`", part, name)),
                 }
             }
 
             match current_value {
                 Some(value) => Ok(value.to_string()),
-                None => Err(format!("Variable '{}' not found in context", name)),
+                None => Err(format!("Variable `{}` not found in context", name)),
             }
         }
         Node::If(condition, true_branch, else_branch) => {
@@ -169,7 +249,7 @@ fn render_node(node: &Node, context: &HashMap<String, Value>) -> Result<String, 
                 Some(Value::List(list)) => list,
                 _ => {
                     return Err(format!(
-                        "Collection '{}' not found or not a list",
+                        "Collection `{}` not found or not a list",
                         collection
                     ))
                 }
@@ -177,7 +257,7 @@ fn render_node(node: &Node, context: &HashMap<String, Value>) -> Result<String, 
             let mut output = String::new();
             for value in items {
                 let mut loop_context = context.clone();
-                loop_context.insert(item.clone(), value.clone());
+                loop_context.set(item.clone(), value.clone());
                 output.push_str(&render_nodes(body, &loop_context)?);
             }
             Ok(output)
@@ -185,7 +265,7 @@ fn render_node(node: &Node, context: &HashMap<String, Value>) -> Result<String, 
     }
 }
 
-fn render_nodes(nodes: &[Node], context: &HashMap<String, Value>) -> Result<String, String> {
+fn render_nodes(nodes: &[Node], context: &Context) -> Result<String, String> {
     let mut output = String::new();
     for node in nodes {
         output.push_str(&render_node(node, context)?);
@@ -193,14 +273,14 @@ fn render_nodes(nodes: &[Node], context: &HashMap<String, Value>) -> Result<Stri
     Ok(output)
 }
 
-fn eval_condition(condition: &str, context: &HashMap<String, Value>) -> Result<bool, String> {
+fn eval_condition(condition: &str, context: &Context) -> Result<bool, String> {
     let parts: Vec<&str> = condition.split('.').collect();
     let mut current_value = context.get(parts[0]);
 
     for &part in &parts[1..] {
         match current_value {
             Some(Value::Object(obj)) => current_value = obj.get(part),
-            _ => return Err(format!("Cannot access '{}' in '{}'", part, condition)),
+            _ => return Err(format!("Cannot access `{}` in `{}`", part, condition)),
         }
     }
 
@@ -210,22 +290,42 @@ fn eval_condition(condition: &str, context: &HashMap<String, Value>) -> Result<b
         Some(Value::String(s)) => Ok(!s.is_empty()),
         Some(Value::List(l)) => Ok(!l.is_empty()),
         Some(Value::Object(o)) => Ok(!o.is_empty()),
-        None => Err(format!("Condition '{}' not found in context", condition)),
+        None => Err(format!("Condition `{}` not found in context", condition)),
     }
 }
 
+/// Represents a template engine.
+///
+/// # Examples
+///
+/// ```
+/// use crabtml::TemplateEngine;
+/// let engine = TemplateEngine::new();
+/// ```
 pub struct TemplateEngine {
-    pub templates: HashMap<String, Template>,
+    templates: HashMap<String, Template>,
 }
 
 impl TemplateEngine {
+    /// Creates a new `TemplateEngine`.
     pub fn new() -> Self {
         TemplateEngine {
             templates: HashMap::new(),
         }
     }
 
-    pub fn add_template_from_file(&mut self, name: &str, path: &Path) -> io::Result<()> {
+    /// Adds a template from a file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crabtml::TemplateEngine;
+    /// let mut engine = TemplateEngine::new();
+    /// engine.add_template_from_file("test", "tests/test.html").unwrap();
+    /// assert!(!engine.is_empty());
+    /// ```
+    pub fn add_template_from_file(&mut self, name: &str, pathname: &str) -> io::Result<()> {
+        let path = Path::new(pathname);
         let content = fs::read_to_string(path)?;
         let template =
             Template::new(&content).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -233,6 +333,16 @@ impl TemplateEngine {
         Ok(())
     }
 
+    /// Adds a template from a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crabtml::TemplateEngine;
+    /// let mut engine = TemplateEngine::new();
+    /// engine.add_template_from_string("test", "hello {{ text }}").unwrap();
+    /// assert!(!engine.is_empty());
+    /// ```
     pub fn add_template_from_string(&mut self, name: &str, template: &str) -> Result<(), String> {
         let template =
             Template::new(template).map_err(|e| format!("Failed to parse template: {}", e))?;
@@ -240,23 +350,57 @@ impl TemplateEngine {
         Ok(())
     }
 
-    pub fn render(&self, name: &str, context: &HashMap<String, Value>) -> Result<String, String> {
+    /// Renders a template.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crabtml::{TemplateEngine, Context};
+    /// let mut engine = TemplateEngine::new();
+    /// engine.add_template_from_string("test", "hello {{ text }}").unwrap();
+    /// let mut context = Context::new();
+    /// context.set("text", "darkness my old friend");
+    /// let rendered = engine.render("test", &context).unwrap();
+    /// assert_eq!(rendered, "hello darkness my old friend");
+    /// ```
+    pub fn render(&self, name: &str, context: &Context) -> Result<String, String> {
         match self.templates.get(name) {
             Some(template) => template.render(context),
             None => Err(format!("Template '{}' not found", name)),
         }
     }
+
+    /// Checks if the template engine is empty, i.e. has no templates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crabtml::TemplateEngine;
+    /// let engine = TemplateEngine::new();
+    /// assert!(engine.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.templates.is_empty()
+    }
 }
 
-/// Creates a template context from a list of key-value pairs.
+/// Creates an `Object` from a list of key-value pairs.
+#[macro_export]
+macro_rules! object {
+    ($($key:expr => $value:expr),* $(,)?) => {{
+        let mut object = ::std::collections::HashMap::new();
+        $(
+            object.insert($key.to_string(), $crate::Value::from($value));
+        )*
+        $crate::Object(object)
+    }};
+}
+
+/// Alias for `object!` macro.
 #[macro_export]
 macro_rules! context {
     ($($key:expr => $value:expr),* $(,)?) => {{
-        let mut context = ::std::collections::HashMap::new();
-        $(
-            context.insert($key.to_string(), $crate::Value::from($value));
-        )*
-        context
+        $crate::object!($($key => $value),*)
     }};
 }
 
@@ -278,6 +422,12 @@ impl From<f64> for Value {
     }
 }
 
+impl From<i32> for Value {
+    fn from(n: i32) -> Self {
+        Value::Number(n as f64)
+    }
+}
+
 impl From<bool> for Value {
     fn from(b: bool) -> Self {
         Value::Boolean(b)
@@ -293,6 +443,12 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
 impl<T: Into<Value>> From<HashMap<String, T>> for Value {
     fn from(m: HashMap<String, T>) -> Self {
         Value::Object(m.into_iter().map(|(k, v)| (k, v.into())).collect())
+    }
+}
+
+impl From<Object> for Value {
+    fn from(o: Object) -> Self {
+        Value::Object(o)
     }
 }
 
@@ -334,14 +490,14 @@ mod tests {
         engine
     }
 
-    fn create_test_context() -> HashMap<String, Value> {
-        let mut context = HashMap::new();
-        context.insert(
+    fn create_test_context() -> Context {
+        let mut context = Context::new();
+        context.set(
             "title".to_string(),
             Value::String("Welcome to CrabTML!".to_string()),
         );
-        context.insert("show_message".to_string(), Value::Boolean(true));
-        context.insert(
+        context.set("show_message".to_string(), Value::Boolean(true));
+        context.set(
             "items".to_string(),
             Value::List(vec![
                 Value::String("Apple".to_string()),
@@ -349,12 +505,12 @@ mod tests {
                 Value::String("Cherry".to_string()),
             ]),
         );
-        context.insert("price".to_string(), Value::Number(19.99));
+        context.set("price".to_string(), Value::Number(19.99));
 
-        let mut user_info = HashMap::new();
-        user_info.insert("name".to_string(), Value::String("John Doe".to_string()));
-        user_info.insert("age".to_string(), Value::Number(30.0));
-        context.insert("user".to_string(), Value::Object(user_info));
+        let mut user_info = Object::new();
+        user_info.set("name".to_string(), Value::String("John Doe".to_string()));
+        user_info.set("age".to_string(), Value::Number(30.0));
+        context.set("user".to_string(), Value::Object(user_info));
 
         context
     }
@@ -369,8 +525,8 @@ mod tests {
             .unwrap();
 
         // Create a context
-        let mut context = HashMap::new();
-        context.insert(
+        let mut context = Context::new();
+        context.set(
             "text".to_string(),
             Value::String("darkness my old friend".to_string()),
         );
@@ -408,7 +564,7 @@ mod tests {
         assert!(!rendered.contains("<p>Please log in to see the welcome message.</p>"));
 
         // Test with show_message = false
-        context.insert("show_message".to_string(), Value::Boolean(false));
+        context.set("show_message".to_string(), Value::Boolean(false));
         let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
         assert!(!rendered.contains("<p>Welcome to our website!</p>"));
         assert!(rendered.contains("<p>Please log in to see the welcome message.</p>"));
@@ -426,7 +582,7 @@ mod tests {
         assert!(rendered.contains("<li>Cherry</li>"));
 
         // Test with empty list
-        context.insert("items".to_string(), Value::List(vec![]));
+        context.set("items".to_string(), Value::List(vec![]));
         let rendered = engine.render(TEMPLATE_NAME, &context).unwrap();
         assert!(!rendered.contains("<li>"));
     }
@@ -446,8 +602,8 @@ mod tests {
         engine
             .add_template_from_string("no_else", "{% if cond %}hello{% endif %}")
             .unwrap();
-        let mut context = HashMap::new();
-        context.insert("cond".to_string(), Value::Boolean(true));
+        let mut context = Context::new();
+        context.set("cond".to_string(), Value::Boolean(true));
         let rendered = engine.render("no_else", &context).unwrap();
         assert_eq!(rendered, "hello");
     }
@@ -465,7 +621,7 @@ mod tests {
             },
         };
 
-        assert_eq!(context.len(), 5);
+        assert_eq!(context.size(), 5);
         assert_eq!(
             context.get("title"),
             Some(&Value::String("Welcome to CrabTML!".to_string()))
@@ -493,5 +649,27 @@ mod tests {
             );
             assert_eq!(user.get("age"), Some(&Value::Number(30.0)));
         }
+    }
+
+    #[test]
+    fn test_template_error_handling() {
+        let engine = TemplateEngine::new();
+        let result = engine.render("test", &Context::new());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Template 'test' not found".to_string());
+    }
+
+    #[test]
+    fn test_variable_error_handling() {
+        let mut engine = TemplateEngine::new();
+        engine
+            .add_template_from_string("test", "hello {{ text }}")
+            .unwrap();
+        let result = engine.render("test", &Context::new());
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Variable `text` not found in context".to_string()
+        );
     }
 }

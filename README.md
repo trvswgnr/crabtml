@@ -47,6 +47,12 @@ fn main() {
     // Render the template
     let result = engine.render("example", &context).unwrap();
     println!("{}", result); // -> hello darkness my old friend
+
+
+    // Create a context using the context macro
+    let context = context! {
+        "text" => "darkness my old friend",
+    };
 }
 ```
 
