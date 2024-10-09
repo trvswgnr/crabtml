@@ -173,6 +173,54 @@ impl fmt::Display for Value {
     }
 }
 
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(n: f64) -> Self {
+        Value::Number(n)
+    }
+}
+
+impl From<i32> for Value {
+    fn from(n: i32) -> Self {
+        Value::Number(n as f64)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
+    }
+}
+
+impl<T: Into<Value>> From<Vec<T>> for Value {
+    fn from(v: Vec<T>) -> Self {
+        Value::List(v.into_iter().map(|item| item.into()).collect())
+    }
+}
+
+impl<T: Into<Value>> From<HashMap<String, T>> for Value {
+    fn from(m: HashMap<String, T>) -> Self {
+        Value::Object(m.into_iter().map(|(k, v)| (k, v.into())).collect())
+    }
+}
+
+impl From<Object> for Value {
+    fn from(o: Object) -> Self {
+        Value::Object(o)
+    }
+}
+
 fn parse_template(input: &str) -> IResult<&str, Vec<Node>> {
     many0(alt((parse_variable, parse_if, parse_for, parse_text)))(input)
 }
@@ -445,54 +493,6 @@ macro_rules! context {
     ($($key:expr => $value:expr),* $(,)?) => {{
         $crate::object!($($key => $value),*)
     }};
-}
-
-impl From<&str> for Value {
-    fn from(s: &str) -> Self {
-        Value::String(s.to_string())
-    }
-}
-
-impl From<String> for Value {
-    fn from(s: String) -> Self {
-        Value::String(s)
-    }
-}
-
-impl From<f64> for Value {
-    fn from(n: f64) -> Self {
-        Value::Number(n)
-    }
-}
-
-impl From<i32> for Value {
-    fn from(n: i32) -> Self {
-        Value::Number(n as f64)
-    }
-}
-
-impl From<bool> for Value {
-    fn from(b: bool) -> Self {
-        Value::Boolean(b)
-    }
-}
-
-impl<T: Into<Value>> From<Vec<T>> for Value {
-    fn from(v: Vec<T>) -> Self {
-        Value::List(v.into_iter().map(|item| item.into()).collect())
-    }
-}
-
-impl<T: Into<Value>> From<HashMap<String, T>> for Value {
-    fn from(m: HashMap<String, T>) -> Self {
-        Value::Object(m.into_iter().map(|(k, v)| (k, v.into())).collect())
-    }
-}
-
-impl From<Object> for Value {
-    fn from(o: Object) -> Self {
-        Value::Object(o)
-    }
 }
 
 #[cfg(test)]
