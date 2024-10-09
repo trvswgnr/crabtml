@@ -22,13 +22,18 @@ use nom::{
     IResult,
 };
 
+type AnyError = Box<dyn std::error::Error>;
+
+#[allow(non_camel_case_types)]
+type unit = ();
+const UNIT: unit = ();
+
 #[derive(Debug, Clone)]
 enum Node {
     Text(String),
     Variable(String),
     If(String, Vec<Node>, Option<Vec<Node>>),
     For(String, String, Vec<Node>),
-    // Add this new variant
     Let(String, Value),
 }
 
@@ -38,19 +43,19 @@ struct Template {
 }
 
 impl Template {
-    pub fn new(template: &str) -> Result<Self, String> {
+    pub fn new(template: &str) -> Result<Self, AnyError> {
         match parse_template(template) {
             Ok((_, nodes)) => Ok(Template { nodes }),
             Err(e) => match &e {
                 nom::Err::Error(e) | nom::Err::Failure(e) => {
-                    Err(format!("Failed to parse template: {:?}", e))
+                    Err(format!("Failed to parse template: {:?}", e).into())
                 }
-                nom::Err::Incomplete(_) => Err(format!("Incomplete input")),
+                nom::Err::Incomplete(_) => Err(format!("Incomplete input").into()),
             },
         }
     }
 
-    pub fn render(&self, context: &mut Context) -> Result<String, String> {
+    pub fn render(&self, context: &mut Context) -> Result<String, AnyError> {
         render_nodes(&self.nodes, context)
     }
 }
@@ -111,24 +116,35 @@ impl Context {
     }
 
     /// Creates a new `Context` from a JSON file.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, AnyError> {
         let path = PathBuf::from(path.as_ref());
         // if the file does not exist, return an Error
         if !path.exists() {
-            return Err(format!("Context file not found: {}", path.display()));
+            return Err(format!("Context file not found: {}", path.display()).into());
         }
         // if the file is not a JSON file, return an Error
-        if path.extension().unwrap_or_default() != ".json" {
-            return Err(format!(
-                "Context file is not a JSON file: {}",
-                path.display()
-            ));
+        if path.extension().unwrap_or_default() != "json" {
+            return Err(format!("Context file is not a JSON file: {}", path.display()).into());
         }
         let content =
             fs::read_to_string(path).map_err(|e| format!("Failed to read context file: {}", e))?;
-        let object = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse context: {}", e))?;
-        Ok(Context(object))
+        Context::from_json(&content)
+    }
+
+    fn from_json(content: &str) -> Result<Self, AnyError> {
+        let value: serde_json::Value =
+            serde_json::from_str(content).map_err(|e| format!("Failed to parse context: {}", e))?;
+
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut ctx = Context::new();
+                for (k, v) in map {
+                    ctx.set(k, json_to_value(v)?);
+                }
+                Ok(ctx)
+            }
+            _ => Err("Root JSON value must be an object".into()),
+        }
     }
 }
 
@@ -228,7 +244,7 @@ fn parse_template(input: &str) -> IResult<&str, Vec<Node>> {
         parse_variable,
         parse_if,
         parse_for,
-        parse_let, // Add this new parser
+        parse_let,
         parse_text,
     )))(input)
 }
@@ -294,7 +310,6 @@ fn parse_for(input: &str) -> IResult<&str, Node> {
     ))
 }
 
-// Add this new parser function
 fn parse_let(input: &str) -> IResult<&str, Node> {
     let (input, _) = tag("{% let ")(input)?;
     let (input, var_name) = alphanumeric1(input)?;
@@ -313,7 +328,7 @@ fn parse_let(input: &str) -> IResult<&str, Node> {
     Ok((input, Node::Let(var_name.to_string(), value)))
 }
 
-fn render_node(node: &Node, context: &mut Context) -> Result<String, String> {
+fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
     match node {
         Node::Text(text) => Ok(text.clone()),
         Node::Variable(name) => {
@@ -323,13 +338,13 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, String> {
             for &part in &parts[1..] {
                 match current_value {
                     Some(Value::Object(obj)) => current_value = obj.get(part),
-                    _ => return Err(format!("Cannot access `{}` in `{}`", part, name)),
+                    _ => return Err(format!("Cannot access `{}` in `{}`", part, name).into()),
                 }
             }
 
             match current_value {
                 Some(value) => Ok(value.to_string()),
-                None => Err(format!("Variable `{}` not found in context", name)),
+                None => Err(format!("Variable `{}` not found in context", name).into()),
             }
         }
         Node::If(condition, true_branch, else_branch) => {
@@ -346,10 +361,9 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, String> {
             let items = match context.get(collection) {
                 Some(Value::List(list)) => list,
                 _ => {
-                    return Err(format!(
-                        "Collection `{}` not found or not a list",
-                        collection
-                    ))
+                    return Err(
+                        format!("Collection `{}` not found or not a list", collection).into(),
+                    )
                 }
             };
             let mut output = String::new();
@@ -367,7 +381,7 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, String> {
     }
 }
 
-fn render_nodes(nodes: &[Node], context: &mut Context) -> Result<String, String> {
+fn render_nodes(nodes: &[Node], context: &mut Context) -> Result<String, AnyError> {
     let mut output = String::new();
     for node in nodes {
         output.push_str(&render_node(node, context)?);
@@ -416,7 +430,7 @@ impl TemplateEngine {
         }
     }
 
-    fn add_template(&mut self, name: &str, template: Template) -> Result<(), io::Error> {
+    fn add_template(&mut self, name: &str, template: Template) -> Result<unit, io::Error> {
         if self.templates.contains_key(name) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -424,7 +438,7 @@ impl TemplateEngine {
             ));
         }
         self.templates.insert(name.to_string(), template);
-        Ok(())
+        Ok(UNIT)
     }
 
     /// Adds a template from a file path to the template engine.
@@ -441,12 +455,12 @@ impl TemplateEngine {
         &mut self,
         name: &str,
         pathname: P,
-    ) -> io::Result<()> {
+    ) -> Result<unit, AnyError> {
         let path = PathBuf::from(pathname.as_ref());
         let content = fs::read_to_string(path)?;
-        let template =
-            Template::new(&content).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        self.add_template(name, template)
+        let template = Template::new(&content)?;
+        self.add_template(name, template)?;
+        Ok(UNIT)
     }
 
     /// Adds a template from a string to the template engine.
@@ -463,10 +477,10 @@ impl TemplateEngine {
         &mut self,
         name: &str,
         template: &str,
-    ) -> Result<(), io::Error> {
-        let template =
-            Template::new(template).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        self.add_template(name, template)
+    ) -> Result<unit, AnyError> {
+        let template = Template::new(template)?;
+        self.add_template(name, template)?;
+        Ok(UNIT)
     }
 
     /// Renders a template.
@@ -485,10 +499,10 @@ impl TemplateEngine {
     /// let rendered = engine.render("test", &mut context).unwrap();
     /// assert_eq!(rendered, "hello darkness my old friend");
     /// ```
-    pub fn render(&self, name: &str, context: &mut Context) -> Result<String, String> {
+    pub fn render(&self, name: &str, context: &mut Context) -> Result<String, AnyError> {
         match self.templates.get(name) {
             Some(template) => template.render(context),
-            None => Err(format!("Template '{}' not found", name)),
+            None => Err(format!("Template '{}' not found", name).into()),
         }
     }
 
@@ -526,6 +540,29 @@ macro_rules! context {
     }};
 }
 
+fn json_to_value(value: serde_json::Value) -> Result<Value, AnyError> {
+    match value {
+        serde_json::Value::Null => Ok(Value::String("".to_string())),
+        serde_json::Value::Bool(b) => Ok(Value::Boolean(b)),
+        serde_json::Value::Number(n) => Ok(Value::Number(n.as_f64().unwrap_or(0.0))),
+        serde_json::Value::String(s) => Ok(Value::String(s)),
+        serde_json::Value::Array(arr) => {
+            let mut list = Vec::new();
+            for item in arr {
+                list.push(json_to_value(item)?);
+            }
+            Ok(Value::List(list))
+        }
+        serde_json::Value::Object(map) => {
+            let mut object = Object::new();
+            for (k, v) in map {
+                object.set(k, json_to_value(v)?);
+            }
+            Ok(Value::Object(object))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,30 +571,7 @@ mod tests {
 
     fn create_test_engine() -> TemplateEngine {
         let mut engine = TemplateEngine::new();
-        let template = r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title }}</title>
-</head>
-<body>
-    <h1>{{ title }}</h1>
-    <p>Price: ${{ price }}</p>
-    <p>User: {{ user.name }} ({{ user.age }} years old)</p>
-    {% if show_message %}
-        <p>Welcome to our website!</p>
-    {% else %}
-        <p>Please log in to see the welcome message.</p>
-    {% endif %}
-    <h2>Available Items:</h2>
-    <ul>
-        {% for item in items %}
-            <li>{{ item }}</li>
-        {% endfor %}
-    </ul>
-</body>
-</html>"#;
+        let template = include_str!("../tests/test.html");
         engine
             .add_template_from_string(TEMPLATE_NAME, template)
             .unwrap();
@@ -613,7 +627,9 @@ mod tests {
     #[test]
     fn test_template_from_file() {
         let mut engine = TemplateEngine::new();
-        engine.add_template_from_file("test", "tests/test.html").unwrap();
+        engine
+            .add_template_from_file("test", "tests/test.html")
+            .unwrap();
         let mut context = create_test_context();
         let result = engine.render("test", &mut context).unwrap();
         assert!(result.contains("<title>Welcome to CrabTML!</title>"));
@@ -740,7 +756,21 @@ mod tests {
         let engine = TemplateEngine::new();
         let result = engine.render("test", &mut Context::new());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Template 'test' not found".to_string());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Template 'test' not found".to_string()
+        );
+    }
+
+    #[test]
+    fn test_context_from_file() {
+        let mut engine = TemplateEngine::new();
+        engine
+            .add_template_from_file("test", "tests/test.html")
+            .unwrap();
+        let mut context = Context::from_file("tests/test.json").unwrap();
+        let result = engine.render("test", &mut context).unwrap();
+        assert!(result.contains("<title>Welcome to CrabTML!</title>"));
     }
 
     #[test]
@@ -752,7 +782,7 @@ mod tests {
         let result = engine.render("test", &mut Context::new());
         assert!(result.is_err());
         assert_eq!(
-            result.unwrap_err(),
+            result.unwrap_err().to_string(),
             "Variable `text` not found in context".to_string()
         );
     }
