@@ -184,6 +184,8 @@ pub enum Value {
     List(Vec<Value>),
     /// An object containing key-value pairs.
     Object(Object),
+    /// A variable value.
+    Variable(String),
 }
 
 impl fmt::Display for Value {
@@ -194,6 +196,7 @@ impl fmt::Display for Value {
             Value::Boolean(b) => write!(f, "{:?}", b),
             Value::List(l) => write!(f, "{:?}", l),
             Value::Object(o) => write!(f, "{:?}", o),
+            Value::Variable(v) => write!(f, "{}", v),
         }
     }
 }
@@ -352,6 +355,7 @@ fn parse_let(input: &str) -> IResult<&str, Node> {
         map(nom::number::complete::double, Value::Number),
         map(tag("true"), |_| Value::Boolean(true)),
         map(tag("false"), |_| Value::Boolean(false)),
+        map(alphanumeric1, |s: &str| Value::Variable(s.to_string())),
     ))(input)?;
     let (input, _) = tag(" %}")(input)?;
 
@@ -405,8 +409,19 @@ fn render_node(node: &Node, context: &mut Context) -> Result<String, AnyError> {
             Ok(output)
         }
         Node::Let(var_name, value) => {
-            context.set(var_name.clone(), value.clone());
-            Ok(String::new()) // Let statements don't produce output
+            let resolved_value = match value {
+                Value::Variable(var) => {
+                    context
+                        .get(var)
+                        .cloned()
+                        .ok_or_else(|| -> Box<dyn std::error::Error> {
+                            format!("Variable `{}` not found in context", var).into()
+                        })?
+                }
+                _ => value.clone(),
+            };
+            context.set(var_name.clone(), resolved_value);
+            Ok(String::new())
         }
     }
 }
@@ -436,6 +451,7 @@ fn eval_condition(condition: &str, context: &Context) -> Result<bool, String> {
         Some(Value::String(s)) => Ok(!s.is_empty()),
         Some(Value::List(l)) => Ok(!l.is_empty()),
         Some(Value::Object(o)) => Ok(!o.is_empty()),
+        Some(Value::Variable(_)) => Err(format!("Variable `{}` not found in context", condition)),
         None => Err(format!("Condition `{}` not found in context", condition)),
     }
 }
@@ -799,14 +815,42 @@ mod tests {
         let mut engine = TemplateEngine::new();
         engine
             .add_template_from_string(
-                "let_test",
+                "let_test1",
                 "{% let x = 42 %}{% let y = \"hello\" %}X: {{ x }}, Y: {{ y }}",
             )
             .unwrap();
         let mut context = Context::new();
-        let rendered = engine.render("let_test", &mut context).unwrap();
+        let rendered = engine.render("let_test1", &mut context).unwrap();
         assert_eq!(rendered, "X: 42, Y: hello");
         assert_eq!(context.get("x"), Some(&Value::Number(42.0)));
         assert_eq!(context.get("y"), Some(&Value::String("hello".to_string())));
+
+        engine
+            .add_template_from_string(
+                "let_test2",
+                "{% let x = 42 %}{% let y = \"hello\" %}X: {{ x }}, Y: {{ y }}\n{% let x = 50 %}{% let y = 100 %}X: {{ x }}, Y: {{ y }}",
+            )
+            .unwrap();
+        let mut context = Context::new();
+        let rendered = engine.render("let_test2", &mut context).unwrap();
+        assert_eq!(rendered, "X: 42, Y: hello\nX: 50, Y: 100");
+        assert_eq!(context.get("x"), Some(&Value::Number(50.0)));
+        assert_eq!(context.get("y"), Some(&Value::Number(100.0)));
+    }
+
+    #[test]
+    fn test_let_statement_assign_to_variable() {
+        let mut engine = TemplateEngine::new();
+        engine
+            .add_template_from_string(
+                "test",
+                "{% let x = 42 %}{% let y = \"hello\" %}X: {{ x }}, Y: {{ y }}\n{% let y = x %}{% let x = 100 %}X: {{ x }}, Y: {{ y }}",
+            )
+            .unwrap();
+        let mut context = Context::new();
+        let rendered = engine.render("test", &mut context).unwrap();
+        assert_eq!(rendered, "X: 42, Y: hello\nX: 100, Y: 42");
+        assert_eq!(context.get("x"), Some(&Value::Number(100.0)));
+        assert_eq!(context.get("y"), Some(&Value::Number(42.0)));
     }
 }
